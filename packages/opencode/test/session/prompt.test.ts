@@ -103,6 +103,28 @@ function withSh<A, E, R>(fx: () => Effect.Effect<A, E, R>) {
   )
 }
 
+// kilocode_change start
+function withCap<A, E, R>(fx: () => Effect.Effect<A, E, R>) {
+  return Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const max = process.env.KILO_COMMAND_TIMEOUT_MAX_MS
+      const msg = process.env.KILO_COMMAND_TIMEOUT_MAX_MS_MESSAGE
+      process.env.KILO_COMMAND_TIMEOUT_MAX_MS = "500"
+      process.env.KILO_COMMAND_TIMEOUT_MAX_MS_MESSAGE = "You're running in a sandbox with a fixed timeout."
+      return { max, msg }
+    }),
+    () => fx(),
+    (prev) =>
+      Effect.sync(() => {
+        if (prev.max === undefined) delete process.env.KILO_COMMAND_TIMEOUT_MAX_MS
+        else process.env.KILO_COMMAND_TIMEOUT_MAX_MS = prev.max
+        if (prev.msg === undefined) delete process.env.KILO_COMMAND_TIMEOUT_MAX_MS_MESSAGE
+        else process.env.KILO_COMMAND_TIMEOUT_MAX_MS_MESSAGE = prev.msg
+      }),
+  )
+}
+// kilocode_change end
+
 function toolPart(parts: MessageV2.Part[]) {
   return parts.find((part): part is MessageV2.ToolPart => part.type === "tool")
 }
@@ -1486,6 +1508,36 @@ unix(
     ),
   30_000,
 )
+
+// kilocode_change start
+unix(
+  "environment timeout caps direct shell commands",
+  () =>
+    withSh(() =>
+      withCap(() =>
+        provideTmpdirInstance(
+          (_dir) =>
+            Effect.gen(function* () {
+              const { prompt, chat } = yield* boot()
+              const result = yield* prompt.shell({
+                sessionID: chat.id,
+                agent: "build",
+                command: "printf started; sleep 30",
+              })
+              const tool = completedTool(result.parts)
+              expect(tool?.state.output).toContain("started")
+              expect(tool?.state.output).toContain(
+                "shell command terminated after exceeding environment timeout 500 ms.",
+              )
+              expect(tool?.state.output).toContain("You're running in a sandbox with a fixed timeout.")
+            }),
+          { git: true, config: cfg },
+        ),
+      ),
+    ),
+  30_000,
+)
+// kilocode_change end
 
 unix(
   "cancel interrupts shell and resolves cleanly",

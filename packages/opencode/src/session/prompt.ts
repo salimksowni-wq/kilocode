@@ -6,6 +6,7 @@ import { KiloSessionPromptQueue } from "@/kilocode/session/prompt-queue" // kilo
 import { KiloSession } from "@/kilocode/session" // kilocode_change
 import { KiloCostPropagation } from "@/kilocode/session/cost-propagation" // kilocode_change
 import { KiloSessionProcessor } from "@/kilocode/session/processor" // kilocode_change
+import { CommandTimeout } from "@/kilocode/command-timeout" // kilocode_change
 import { Suggestion } from "@/kilocode/suggestion" // kilocode_change
 import { Question } from "@/question" // kilocode_change
 import z from "zod"
@@ -53,7 +54,6 @@ import { ShellID } from "@/tool/shell/id"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
-import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
 import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
@@ -864,14 +864,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const cfg = yield* config.get()
           const sh = Shell.preferred(cfg.shell)
           const args = Shell.args(sh, input.command, cwd)
+          const limit = CommandTimeout.env() // kilocode_change
           let output = ""
           let aborted = false
+          let expired = false // kilocode_change
 
           const finish = Effect.uninterruptible(
             Effect.gen(function* () {
               if (aborted) {
                 output += "\n\n" + ["<metadata>", "User aborted the command", "</metadata>"].join("\n")
               }
+              // kilocode_change start
+              if (expired && limit) {
+                output +=
+                  "\n\n" +
+                  ["<metadata>", CommandTimeout.note(limit, "shell command terminated"), "</metadata>"].join("\n")
+              }
+              // kilocode_change end
               const completed = Date.now()
               EventV2.run(SessionEvent.Shell.Ended.Sync, {
                 sessionID: input.sessionID,
@@ -912,7 +921,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 forceKillAfter: "3 seconds",
               })
               const handle = yield* spawner.spawn(cmd)
-              yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
+              // kilocode_change start
+              const done = Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
                 Effect.gen(function* () {
                   output += chunk
                   if (part.state.status === "running") {
@@ -920,8 +930,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     yield* sessions.updatePart(part)
                   }
                 }),
-              )
-              yield* handle.exitCode
+              ).pipe(Effect.andThen(handle.exitCode))
+              if (!limit) {
+                yield* done
+                return
+              }
+              const state = yield* Effect.raceAll([
+                done.pipe(Effect.as("exit" as const)),
+                Effect.sleep(`${limit.timeout + 100} millis`).pipe(Effect.as("timeout" as const)),
+              ])
+              if (state === "timeout") {
+                expired = true
+                yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+              }
+              // kilocode_change end
             }).pipe(Effect.scoped, Effect.orDie),
           ).pipe(Effect.exit)
 
@@ -1907,10 +1929,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (shellMatches.length > 0) {
         const cfg = yield* config.get()
         const sh = Shell.preferred(cfg.shell)
-        const results = yield* Effect.promise(() =>
-          Promise.all(
-            shellMatches.map(async ([, cmd]) => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
+        const results = yield* Effect.all(
+          // kilocode_change start
+          shellMatches.map(([, cmd]) =>
+            CommandTimeout.text(cmd, sh).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
           ),
+          // kilocode_change end
         )
         let index = 0
         template = template.replace(bashRegex, () => results[index++])
