@@ -1929,15 +1929,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (shellMatches.length > 0) {
         const cfg = yield* config.get()
         const sh = Shell.preferred(cfg.shell)
+        // kilocode_change start
         const results = yield* Effect.all(
-          // kilocode_change start
           shellMatches.map(([, cmd]) =>
             CommandTimeout.text(cmd, sh).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
           ),
-          // kilocode_change end
         )
+        // kilocode_change end
         let index = 0
         template = template.replace(bashRegex, () => results[index++])
       }

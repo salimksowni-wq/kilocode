@@ -1124,6 +1124,7 @@ describe("tool.shell abort", () => {
     })
   }, 15_000)
 
+  // kilocode_change start
   test("caps requested and default timeouts from the environment", async () => {
     const max = process.env.KILO_COMMAND_TIMEOUT_MAX_MS
     const msg = process.env.KILO_COMMAND_TIMEOUT_MAX_MS_MESSAGE
@@ -1171,6 +1172,7 @@ describe("tool.shell abort", () => {
       else process.env.KILO_COMMAND_TIMEOUT_MAX_MS_MESSAGE = msg
     }
   }, 30_000)
+  // kilocode_change end
 
   test.skipIf(process.platform === "win32")("captures stderr in output", async () => {
     await WithInstance.provide({
