@@ -6,7 +6,7 @@ import * as Truncate from "../../tool/truncate"
 import { Config } from "../../config/config"
 import { Instance } from "../../project/instance"
 import { makeRuntime } from "@/effect/run-service"
-import z from "zod"
+import { Schema } from "effect"
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
 
@@ -146,7 +146,6 @@ function askGuard(mcp: Record<string, "allow" | "ask" | "deny"> = {}) {
     question: "allow",
     webfetch: "allow",
     websearch: "allow",
-    codesearch: "allow",
     codebase_search: "allow",
     semantic_search: "allow",
     external_directory: {
@@ -171,6 +170,7 @@ function planEditRules(worktree: string) {
   return {
     "*": "deny" as const,
     [path.join(".kilo", "plans", "*.md")]: "allow" as const,
+    [path.join(".plans", "*.md")]: "allow" as const,
     [path.join(".opencode", "plans", "*.md")]: "allow" as const,
     [path.relative(worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow" as const,
   }
@@ -199,7 +199,6 @@ function planGuard(worktree: string, mcp: Record<string, "allow" | "ask" | "deny
     list: "allow",
     webfetch: "allow",
     websearch: "allow",
-    codesearch: "allow",
     codebase_search: "allow",
     semantic_search: "allow",
     external_directory: {
@@ -231,6 +230,16 @@ export function prepare(cfg: Config.Info): KiloData {
   const mcpRules = getMcpRules(cfg)
   const defaultsPatch = Permission.fromConfig({ bash, recall: "ask" })
   return { mcpRules, defaultsPatch }
+}
+
+export function cacheKey(cfg: Config.Info) {
+  return JSON.stringify({
+    agent: cfg.agent,
+    default_agent: cfg.default_agent,
+    mcp: cfg.mcp,
+    mode: cfg.mode,
+    permission: cfg.permission,
+  })
 }
 
 // Map "build" config key to "code" for backward compatibility.
@@ -344,7 +353,6 @@ export function patchAgents(
           skill: "allow",
           webfetch: "allow",
           websearch: "allow",
-          codesearch: "allow",
           codebase_search: "allow",
           semantic_search: "allow",
           read: "allow",
@@ -408,7 +416,6 @@ export function patchAgents(
         todowrite: "allow",
         webfetch: "allow",
         websearch: "allow",
-        codesearch: "allow",
         codebase_search: "allow",
         external_directory: {
           [Truncate.GLOB]: "allow",
@@ -437,13 +444,10 @@ export function patchAgents(
   }
 }
 
-export const RemoveError = NamedError.create(
-  "AgentRemoveError",
-  z.object({
-    name: z.string(),
-    message: z.string(),
-  }),
-)
+export const RemoveError = NamedError.create("AgentRemoveError", {
+  name: Schema.String,
+  message: Schema.String,
+})
 
 /**
  * Remove a custom agent by deleting its markdown source file and/or
